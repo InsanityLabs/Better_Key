@@ -99,8 +99,8 @@ jobs:
           shopt -s nullglob
 
           for pkg in ${{ github.workspace }}/*-windows-x64.zip; do
-            cp installer/install.ps1 LICENSE .
-            mv LICENSE LICENSE.txt
+            cp installer/install.ps1 .
+            cp LICENSE LICENSE.txt
             zip -j "${pkg}" install.ps1 LICENSE.txt README.md
           done
 
