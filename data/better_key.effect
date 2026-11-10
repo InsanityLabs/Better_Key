@@ -1,0 +1,178 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+uniform float despill;
+uniform float output_mode;
+uniform float chroma_enable;
+uniform float4 chroma_color;
+uniform float chroma_similarity;
+uniform float chroma_smoothness;
+uniform float2 pixel_size;
+uniform float luma_mode;
+uniform float luma_level;
+uniform float luma_soft;
+uniform float trans_desat;
+uniform float gamma;
+uniform float contrast;
+uniform float brightness;
+uniform float opacity;
+
+// same constants/color-space handling as obs's chroma_key_filter_v2
+uniform float4 cb_v4 = { -0.100644, -0.338572,  0.439216, 0.501961 };
+uniform float4 cr_v4 = {  0.439216, -0.398942, -0.040274, 0.501961 };
+
+sampler_state imageSampler {
+	Filter    = Linear;
+	AddressU  = Clamp;
+	AddressV  = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float BKNonlinear(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(u, 1.0 / 2.4)) - 0.055);
+}
+
+float3 BKNonlinear3(float3 rgb)
+{
+	return float3(BKNonlinear(rgb.r), BKNonlinear(rgb.g), BKNonlinear(rgb.b));
+}
+
+float BKChromaDist(float3 rgb)
+{
+	float2 key = float2(
+		dot(BKNonlinear3(chroma_color.rgb), cb_v4.xyz) + cb_v4.w,
+		dot(BKNonlinear3(chroma_color.rgb), cr_v4.xyz) + cr_v4.w);
+	float3 nl = BKNonlinear3(rgb);
+	return distance(key, float2(dot(nl, cb_v4.xyz) + cb_v4.w,
+				    dot(nl, cr_v4.xyz) + cr_v4.w));
+}
+
+float BKBoxChromaDist(float3 rgb, float2 uv)
+{
+	float2 half_px = pixel_size / 2.0;
+	float d = BKChromaDist(image.Sample(imageSampler, uv - float2(pixel_size.x, half_px.y)).rgb);
+	d += BKChromaDist(image.Sample(imageSampler, uv + float2(pixel_size.x, half_px.y)).rgb);
+	d += BKChromaDist(image.Sample(imageSampler, uv - float2(half_px.x, -pixel_size.y)).rgb);
+	d += BKChromaDist(image.Sample(imageSampler, uv + float2(half_px.x, -pixel_size.y)).rgb);
+	d *= 2.0;
+	d += BKChromaDist(rgb);
+	return d / 9.0;
+}
+
+float4 PSBetterKey(VertData v_in) : TARGET
+{
+	float4 c = image.Sample(imageSampler, v_in.uv);
+	if (output_mode > 2.5)
+		return float4(saturate(c.rgb), 1.0); // raw input view
+
+	c.rgb *= (c.a > 1e-6) ? (1.0 / c.a) : 0.0;
+
+	float a = 1.0;
+	float screenlike = 0.0;
+	float spill_amt = 0.0;
+
+	if (chroma_enable > 0.5) {
+		float chroma_dist = BKBoxChromaDist(c.rgb, v_in.uv);
+		float base_mask = chroma_dist - chroma_similarity;
+		screenlike = pow(
+			saturate(1.0 - base_mask / (chroma_smoothness * 4.0)),
+			1.5);
+
+		// how much of the key's dominant channel this pixel carries —
+		// the true screen fraction (Vlahos-style coverage estimate)
+		float gkey = max(chroma_color.r,
+				 max(chroma_color.g, chroma_color.b));
+		if (chroma_color.g >= max(chroma_color.r, chroma_color.b))
+			spill_amt = saturate((c.g - max(c.r, c.b)) /
+					     max(gkey, 0.05));
+		else if (chroma_color.b >=
+			 max(chroma_color.r, chroma_color.g))
+			spill_amt = saturate((c.b - max(c.r, c.g)) /
+					     max(gkey, 0.05));
+		else
+			spill_amt = saturate((c.r - max(c.g, c.b)) /
+					     max(gkey, 0.05));
+
+		if (screenlike > 0.05) {
+			// despill also widens the spill estimate — a second job:
+			// cutting the faint residue ghost on near-screen pixels
+			float s2 = saturate(spill_amt *
+					    (1.0 + despill * 0.6));
+			float au = min(a, 1.0 - s2);
+			if (au > 0.02)
+				c.rgb = saturate(
+					(c.rgb - chroma_color.rgb * (1.0 - au)) /
+					au);
+			a = au;
+		}
+	}
+
+	// luma assist: drop dark or bright backgrounds chroma misses
+	if (luma_mode > 0.5) {
+		float lum = dot(c.rgb, float3(0.299, 0.587, 0.114));
+		a *= (luma_mode > 1.5)
+			     ? (1.0 - smoothstep(luma_level,
+						 luma_level + luma_soft, lum))
+			     : smoothstep(luma_level - luma_soft, luma_level,
+					  lum);
+	}
+
+	if (output_mode > 1.5)
+		return float4(saturate(a), saturate(a), saturate(a), 1.0);
+
+	// translucent color fix: unmixed hues are estimates — pull
+	// uncertain colors toward neutral so particles read clean
+	if (trans_desat > 0.001) {
+		float lum2 = dot(c.rgb, float3(0.299, 0.587, 0.114));
+		c.rgb = lerp(c.rgb, float3(lum2, lum2, lum2),
+			     saturate((1.0 - a) * trans_desat));
+	}
+
+	// despill: strongest on partial-alpha edges + screen-hued pixels
+	float edgeband = 4.0 * a * (1.0 - a);
+	float w = despill * max(edgeband, max(screenlike, spill_amt));
+
+	float r = c.r, g = c.g, b = c.b;
+	float sr = max(0.0, r - max(g, b));
+	float sg = max(0.0, g - max(r, b));
+	float sb = max(0.0, b - max(r, g));
+	float smax = max(sr, max(sg, sb));
+	if (smax > 0.0) {
+		float k = w;
+		if (sg == smax)
+			g = lerp(g, max(r, b), k);
+		else if (sb == smax)
+			b = lerp(b, max(r, g), k);
+		else
+			r = lerp(r, max(g, b), k);
+		c.rgb = float3(r, g, b);
+	}
+
+	// output color grade
+	c.rgb = pow(saturate(c.rgb), float3(gamma, gamma, gamma)) * contrast + brightness;
+
+	float fa = saturate(a * opacity);
+	return float4(saturate(c.rgb) * fa, fa);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSBetterKey(v_in);
+	}
+}
