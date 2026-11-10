@@ -32,7 +32,8 @@ worked better a decade ago.
 
 ## Install
 
-Download `better-key-windows-x64.zip` from Releases, then either:
+Grab the latest `better-key-*-windows-x64.zip` from
+[Releases](https://github.com/InsanityLabs/Better_Key/releases), then either:
 
 - Run `install.ps1` (right-click -> Run with PowerShell), or
 - Manually copy the `better-key` folder into

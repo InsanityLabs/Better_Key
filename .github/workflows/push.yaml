@@ -55,6 +55,9 @@ jobs:
             *) echo 'validTag=false' >> $GITHUB_OUTPUT ;;
           esac
 
+      - uses: actions/checkout@v4
+        if: fromJSON(steps.check.outputs.validTag)
+
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         if: fromJSON(steps.check.outputs.validTag)
@@ -86,6 +89,19 @@ jobs:
             for candidate in "${candidates[@]}"; do
               mv "${candidate}" "${root_dir}"
             done
+          done
+
+      - name: Bundle Installer into Windows Zip
+        if: fromJSON(steps.check.outputs.validTag)
+        run: |
+          : Bundle Installer into Windows Zip
+          if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
+          shopt -s nullglob
+
+          for pkg in ${{ github.workspace }}/*-windows-x64.zip; do
+            cp installer/install.ps1 LICENSE .
+            mv LICENSE LICENSE.txt
+            zip -j "${pkg}" install.ps1 LICENSE.txt README.md
           done
 
       - name: Generate Checksums
