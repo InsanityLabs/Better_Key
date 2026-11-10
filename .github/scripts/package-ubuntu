@@ -23,7 +23,7 @@ fi
 
 TRAPZERR() {
   if (( ${_loglevel:-3} > 2 )) {
-    print -u2 -PR "${CI:+::error::}%F{1}    ✖︎ script execution error%f"
+    print -u2 -PR "${CI:+::error::}%F{1}    script execution error%f"
     print -PR -e "
     Callstack:
     ${(j:\n     :)funcfiletrace}

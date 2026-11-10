@@ -91,7 +91,7 @@ float4 PSBetterKey(VertData v_in) : TARGET
 			saturate(1.0 - base_mask / (chroma_smoothness * 4.0)),
 			1.5);
 
-		// how much of the key's dominant channel this pixel carries —
+		// how much of the key's dominant channel this pixel carries
 		// the true screen fraction (Vlahos-style coverage estimate)
 		float gkey = max(chroma_color.r,
 				 max(chroma_color.g, chroma_color.b));
@@ -107,7 +107,7 @@ float4 PSBetterKey(VertData v_in) : TARGET
 					     max(gkey, 0.05));
 
 		if (screenlike > 0.05) {
-			// despill also widens the spill estimate — a second job:
+			// despill also widens the spill estimate a second job:
 			// cutting the faint residue ghost on near-screen pixels
 			float s2 = saturate(spill_amt *
 					    (1.0 + despill * 0.6));
@@ -133,7 +133,7 @@ float4 PSBetterKey(VertData v_in) : TARGET
 	if (output_mode > 1.5)
 		return float4(saturate(a), saturate(a), saturate(a), 1.0);
 
-	// translucent color fix: unmixed hues are estimates — pull
+	// translucent color fix: unmixed hues are estimates pull
 	// uncertain colors toward neutral so particles read clean
 	if (trans_desat > 0.001) {
 		float lum2 = dot(c.rgb, float3(0.299, 0.587, 0.114));

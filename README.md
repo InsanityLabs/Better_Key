@@ -2,7 +2,7 @@
 
 A realtime GPU chroma/luma keyer for OBS Studio that doesn't suck.
 
-Pure shader math — no AI models, no CPU readback, no inference threads.
+Pure shader math. No AI models, no CPU readback, no inference threads.
 Every pixel is keyed per-frame on the GPU with proper coverage estimation
 and screen unmixing, so translucent content (particles, sheer fabric,
 motion blur, smoke, glass) comes through with real alpha and real color
@@ -14,18 +14,18 @@ worked better a decade ago.
 ## Why it's better than a normal chroma key
 
 - **Coverage, not a cut.** Each pixel gets an estimated screen-fraction
-  alpha, not an on/off mask — so soft edges, translucency, and particles
+  alpha, not an on/off mask - so soft edges, translucency, and particles
   survive.
 - **Real unmixing.** Instead of just despilling green pixels, it inverts
-  the compositing equation `c = fg·α + screen·(1−α)` to recover the
-  foreground color underneath the screen bleed.
+  the compositing equation `c = fg*alpha + screen*(1-alpha)` to recover
+  the foreground color underneath the screen bleed.
 - **Translucent color fix.** Uncertain unmixed hues get pulled toward
   neutral so particle overlays read clean instead of shifting
-  purple → yellow → green.
+  purple -> yellow -> green.
 - **Auto-calibrate.** One click samples your frame's corners, finds the
   screen color, and derives similarity from the screen's own variance.
 - **Luma assist.** Key dark or bright backgrounds alongside chroma.
-- **Full matte output.** View/record the generated alpha matte itself —
+- **Full matte output.** View/record the generated alpha matte itself -
   which stock chroma key doesn't even expose.
 - **Realtime.** All pixel-shader work at full frame rate. ~0 added
   latency, tiny GPU cost.
@@ -34,11 +34,11 @@ worked better a decade ago.
 
 Download `better-key-windows-x64.zip` from Releases, then either:
 
-- Run `install.ps1` (right-click → Run with PowerShell), or
+- Run `install.ps1` (right-click -> Run with PowerShell), or
 - Manually copy the `better-key` folder into
   `%PROGRAMDATA%\obs-studio\plugins\`
 
-Restart OBS. Add **Filters → Better Key** to your source.
+Restart OBS. Add **Filters -> Better Key** to your source.
 
 ## Controls
 
@@ -59,21 +59,21 @@ Restart OBS. Add **Filters → Better Key** to your source.
 
 For every pixel the shader computes:
 
-1. **Chroma distance** in Cb/Cr space (9-tap box filter, sRGB-aware —
-   same math as OBS's chroma_key_filter_v2) → how "screen-like" the
+1. **Chroma distance** in Cb/Cr space (9-tap box filter, sRGB-aware;
+   same math as OBS's chroma_key_filter_v2) - how "screen-like" the
    pixel is.
-2. **Spill estimate** — how much of the key's dominant channel the pixel
-   carries → screen coverage `α = 1 − spill`.
-3. **Unmix** — solve `c = fg·α + screen·(1−α)` for `fg` to get the true
-   foreground color back.
+2. **Spill estimate** - how much of the key's dominant channel the pixel
+   carries - screen coverage `alpha = 1 - spill`.
+3. **Unmix** - solve `c = fg*alpha + screen*(1-alpha)` for `fg` to get
+   the true foreground color back.
 4. **Luma assist** multiplies in a luminance key if enabled.
-5. Translucent desat → despill → color grade → premultiplied RGBA out.
+5. Translucent desat -> despill -> color grade -> premultiplied RGBA out.
 
 That's the whole keyer. ~60 lines of math at display resolution.
 
 ## Building from source
 
-Requirements: Windows x64, MSVC 2022, CMake ≥ 3.28.
+Requirements: Windows x64, MSVC 2022, CMake >= 3.28.
 
 ```powershell
 cmake --preset windows-x64
@@ -86,10 +86,10 @@ Copy that folder into `%PROGRAMDATA%\obs-studio\plugins\` or run
 
 ## License
 
-Custom license based on PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE).
+Custom license based on PolyForm Noncommercial 1.0.0 - see [LICENSE](LICENSE).
 
 Short version: **content creators can use it commercially** (streams,
-VTuber, videos, monetized content — all fine). What you can't do is
+VTuber, videos, monetized content - all fine). What you can't do is
 repackage/resell/relicense the software or lift the algorithm into
 another product. Everyone else: noncommercial use only.
 
