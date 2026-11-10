@@ -95,8 +95,7 @@ static void *bk_create(obs_data_t *settings, obs_source_t *source)
 	if (eff_path) {
 		f->effect = gs_effect_create_from_file(eff_path, &err);
 		if (!f->effect && err) {
-			blog(LOG_ERROR, "[better-key] effect compile failed: %s",
-			     err);
+			blog(LOG_ERROR, "[better-key] effect compile failed: %s", err);
 			bfree(err);
 		}
 		bfree(eff_path);
@@ -116,12 +115,9 @@ static void *bk_create(obs_data_t *settings, obs_source_t *source)
 	f->p_despill = gs_effect_get_param_by_name(f->effect, "despill");
 	f->p_output = gs_effect_get_param_by_name(f->effect, "output_mode");
 	f->p_chroma = gs_effect_get_param_by_name(f->effect, "chroma_enable");
-	f->p_chroma_color =
-		gs_effect_get_param_by_name(f->effect, "chroma_color");
-	f->p_chroma_sim =
-		gs_effect_get_param_by_name(f->effect, "chroma_similarity");
-	f->p_chroma_smooth =
-		gs_effect_get_param_by_name(f->effect, "chroma_smoothness");
+	f->p_chroma_color = gs_effect_get_param_by_name(f->effect, "chroma_color");
+	f->p_chroma_sim = gs_effect_get_param_by_name(f->effect, "chroma_similarity");
+	f->p_chroma_smooth = gs_effect_get_param_by_name(f->effect, "chroma_smoothness");
 	f->p_px = gs_effect_get_param_by_name(f->effect, "pixel_size");
 	f->p_luma_mode = gs_effect_get_param_by_name(f->effect, "luma_mode");
 	f->p_luma_level = gs_effect_get_param_by_name(f->effect, "luma_level");
@@ -197,8 +193,7 @@ static void bk_run_calibration(bk_filter *f, gs_texture_t *frame_tex)
 		gs_technique_end(tech);
 		gs_texrender_end(f->calib_tex);
 	}
-	gs_stage_texture(f->calib_surf,
-			 gs_texrender_get_texture(f->calib_tex));
+	gs_stage_texture(f->calib_surf, gs_texrender_get_texture(f->calib_tex));
 
 	uint8_t *pix = nullptr;
 	uint32_t pitch = 0;
@@ -211,8 +206,7 @@ static void bk_run_calibration(bk_filter *f, gs_texture_t *frame_tex)
 		for (int bx : {0, 160 - bw})
 			for (int y = by; y < by + bh; y++)
 				for (int x = bx; x < bx + bw; x++) {
-					const uint8_t *q =
-						pix + y * pitch + x * 4;
+					const uint8_t *q = pix + y * pitch + x * 4;
 					rr.push_back(q[0]);
 					gg.push_back(q[1]);
 					bb.push_back(q[2]);
@@ -223,20 +217,16 @@ static void bk_run_calibration(bk_filter *f, gs_texture_t *frame_tex)
 		std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
 		return v[v.size() / 2];
 	};
-	const float R = med8(rr) / 255.f, G = med8(gg) / 255.f,
-		    B = med8(bb) / 255.f;
+	const float R = med8(rr) / 255.f, G = med8(gg) / 255.f, B = med8(bb) / 255.f;
 
 	// same srgb -> CbCr distance the shader uses
 	auto nl = [](float u) {
-		return u <= 0.0031308f ? 12.92f * u
-				       : 1.055f * powf(u, 1.f / 2.4f) - 0.055f;
+		return u <= 0.0031308f ? 12.92f * u : 1.055f * powf(u, 1.f / 2.4f) - 0.055f;
 	};
 	auto cbcr = [&](float r, float g, float b, float &cb, float &cr) {
 		r = nl(r), g = nl(g), b = nl(b);
-		cb = -0.100644f * r - 0.338572f * g + 0.439216f * b +
-		     0.501961f;
-		cr = 0.439216f * r - 0.398942f * g - 0.040274f * b +
-		     0.501961f;
+		cb = -0.100644f * r - 0.338572f * g + 0.439216f * b + 0.501961f;
+		cr = 0.439216f * r - 0.398942f * g - 0.040274f * b + 0.501961f;
 	};
 	float kcb, kcr;
 	cbcr(R, G, B, kcb, kcr);
@@ -251,18 +241,16 @@ static void bk_run_calibration(bk_filter *f, gs_texture_t *frame_tex)
 	float sim = dist[(size_t)(dist.size() * 0.9)] * 1.5f + 0.08f;
 	sim = std::min(0.5f, std::max(0.05f, sim));
 
-	uint32_t packed = 0xff000000u | ((uint32_t)(B * 255.f) << 16) |
-			  ((uint32_t)(G * 255.f) << 8) | (uint32_t)(R * 255.f);
+	uint32_t packed = 0xff000000u | ((uint32_t)(B * 255.f) << 16) | ((uint32_t)(G * 255.f) << 8) |
+			  (uint32_t)(R * 255.f);
 	obs_data_t *s2 = obs_source_get_settings(f->source);
 	obs_data_set_int(s2, S_CHROMA_COLOR, packed);
 	obs_data_set_bool(s2, S_CHROMA, true);
 	obs_data_set_double(s2, S_CHROMA_SIM, (double)sim);
 	obs_source_update(f->source, s2);
 	obs_data_release(s2);
-	blog(LOG_INFO,
-	     "[better-key] calibrated: rgb=(%.0f,%.0f,%.0f) similarity=%.2f",
-	     (double)(R * 255.f), (double)(G * 255.f), (double)(B * 255.f),
-	     (double)sim);
+	blog(LOG_INFO, "[better-key] calibrated: rgb=(%.0f,%.0f,%.0f) similarity=%.2f", (double)(R * 255.f),
+	     (double)(G * 255.f), (double)(B * 255.f), (double)sim);
 }
 
 static void bk_video_render(void *data, gs_effect_t *)
@@ -292,8 +280,7 @@ static void bk_video_render(void *data, gs_effect_t *)
 
 	gs_texrender_reset(f->texrender);
 	gs_blend_state_push();
-	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA,
-				   GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 	if (gs_texrender_begin(f->texrender, w, h)) {
 		struct vec4 clear = {0.f, 0.f, 0.f, 0.f};
 		gs_clear(GS_CLEAR_COLOR, &clear, 0.f, 0);
@@ -354,8 +341,7 @@ static void bk_video_render(void *data, gs_effect_t *)
 	gs_blend_state_pop();
 }
 
-static bool bk_calibrate_clicked(obs_properties_t *, obs_property_t *,
-				 void *data)
+static bool bk_calibrate_clicked(obs_properties_t *, obs_property_t *, void *data)
 {
 	auto *f = static_cast<bk_filter *>(data);
 	f->calibrate_pending = true;
@@ -368,52 +354,29 @@ static obs_properties_t *bk_properties(void *data)
 	obs_properties_t *p = obs_properties_create();
 
 	obs_properties_add_bool(p, S_CHROMA, obs_module_text("ChromaAssist"));
-	obs_properties_add_color(p, S_CHROMA_COLOR,
-			       obs_module_text("ChromaColor"));
-	obs_properties_add_float_slider(p, S_CHROMA_SIM,
-					obs_module_text("ChromaSim"), 0.0, 1.0,
-					0.01);
-	obs_properties_add_float_slider(p, S_CHROMA_SMOOTH,
-					obs_module_text("ChromaSmooth"), 0.01,
-					1.0, 0.01);
-	obs_properties_add_button2(p, S_CALIB, obs_module_text("Calibrate"),
-				 bk_calibrate_clicked, f);
+	obs_properties_add_color(p, S_CHROMA_COLOR, obs_module_text("ChromaColor"));
+	obs_properties_add_float_slider(p, S_CHROMA_SIM, obs_module_text("ChromaSim"), 0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(p, S_CHROMA_SMOOTH, obs_module_text("ChromaSmooth"), 0.01, 1.0, 0.01);
+	obs_properties_add_button2(p, S_CALIB, obs_module_text("Calibrate"), bk_calibrate_clicked, f);
 
-	obs_property_t *lm = obs_properties_add_list(
-		p, S_LUMA, obs_module_text("LumaMode"), OBS_COMBO_TYPE_LIST,
-		OBS_COMBO_FORMAT_INT);
+	obs_property_t *lm = obs_properties_add_list(p, S_LUMA, obs_module_text("LumaMode"), OBS_COMBO_TYPE_LIST,
+						     OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(lm, obs_module_text("LumaMode.Off"), 0);
 	obs_property_list_add_int(lm, obs_module_text("LumaMode.Darks"), 1);
 	obs_property_list_add_int(lm, obs_module_text("LumaMode.Brights"), 2);
-	obs_properties_add_float_slider(p, S_LUMA_LEVEL,
-					obs_module_text("LumaLevel"), 0.0, 1.0,
-					0.01);
-	obs_properties_add_float_slider(p, S_LUMA_SOFT,
-					obs_module_text("LumaSoft"), 0.01, 1.0,
-					0.01);
+	obs_properties_add_float_slider(p, S_LUMA_LEVEL, obs_module_text("LumaLevel"), 0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(p, S_LUMA_SOFT, obs_module_text("LumaSoft"), 0.01, 1.0, 0.01);
 
-	obs_properties_add_float_slider(p, S_DESPILL, obs_module_text("Despill"),
-					0.0, 1.0, 0.01);
-	obs_properties_add_float_slider(p, S_TDESAT,
-					obs_module_text("TransDesat"), 0.0, 1.0,
-					0.01);
+	obs_properties_add_float_slider(p, S_DESPILL, obs_module_text("Despill"), 0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(p, S_TDESAT, obs_module_text("TransDesat"), 0.0, 1.0, 0.01);
 
-	obs_properties_add_float_slider(p, S_GAMMA, obs_module_text("Gamma"),
-					0.2, 3.0, 0.01);
-	obs_properties_add_float_slider(p, S_CONTRAST,
-					obs_module_text("Contrast"), 0.0, 4.0,
-					0.01);
-	obs_properties_add_float_slider(p, S_BRIGHTNESS,
-					obs_module_text("Brightness"), -1.0,
-					1.0, 0.01);
-	obs_properties_add_float_slider(p, S_OPACITY,
-					obs_module_text("Opacity"), 0.0, 1.0,
-					0.01);
+	obs_properties_add_float_slider(p, S_GAMMA, obs_module_text("Gamma"), 0.2, 3.0, 0.01);
+	obs_properties_add_float_slider(p, S_CONTRAST, obs_module_text("Contrast"), 0.0, 4.0, 0.01);
+	obs_properties_add_float_slider(p, S_BRIGHTNESS, obs_module_text("Brightness"), -1.0, 1.0, 0.01);
+	obs_properties_add_float_slider(p, S_OPACITY, obs_module_text("Opacity"), 0.0, 1.0, 0.01);
 
-	obs_property_t *o =
-		obs_properties_add_list(p, S_OUTPUT, obs_module_text("Output"),
-					OBS_COMBO_TYPE_LIST,
-					OBS_COMBO_FORMAT_INT);
+	obs_property_t *o = obs_properties_add_list(p, S_OUTPUT, obs_module_text("Output"), OBS_COMBO_TYPE_LIST,
+						    OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(o, obs_module_text("Output.Composite"), 0);
 	obs_property_list_add_int(o, obs_module_text("Output.FinalMatte"), 2);
 	obs_property_list_add_int(o, obs_module_text("Output.Raw"), 3);
