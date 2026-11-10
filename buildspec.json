@@ -33,7 +33,7 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.infinitykey.infinity-key"
+            "bundleId": "com.insanitylabs.better-key"
         }
     },
     "name": "better-key",
