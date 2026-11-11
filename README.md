@@ -13,20 +13,29 @@ worked better a decade ago.
 
 ## Why it's better than a normal chroma key
 
+- **A learned screen, not a guessed color.** A 2058-point sample grid
+  (49 x 42) watches the frame, finds the dominant screen-colored
+  cluster, and fits a smooth per-region screen color. Every pixel is
+  keyed against the screen color *where it is*, so uneven lighting and
+  falloff stop producing haze. Live tracking keeps learning as your
+  subject moves - no clean plate needed.
 - **Coverage, not a cut.** Each pixel gets an estimated screen-fraction
   alpha, not an on/off mask - so soft edges, translucency, and particles
   survive.
 - **Real unmixing.** Instead of just despilling green pixels, it inverts
   the compositing equation `c = fg*alpha + screen*(1-alpha)` to recover
-  the foreground color underneath the screen bleed.
-- **Translucent color fix.** Uncertain unmixed hues get pulled toward
-  neutral so particle overlays read clean instead of shifting
-  purple -> yellow -> green.
-- **Auto-calibrate.** One click samples your frame's corners, finds the
-  screen color, and derives similarity from the screen's own variance.
+  the foreground color underneath the screen bleed, with a
+  neutral <-> vivid prior for the mathematically ambiguous cases.
+- **Particle color repair.** Translucent pixels get noisy hue because
+  the unmix divides by coverage. Repair borrows chroma from more solid
+  neighbors and keeps each pixel's own brightness.
+- **Auto-calibrate.** One click finds the dominant screen cluster,
+  sets the key color, and derives similarity from the screen's own
+  spread.
 - **Luma assist.** Key dark or bright backgrounds alongside chroma.
 - **Full matte output.** View/record the generated alpha matte itself -
-  which stock chroma key doesn't even expose.
+  which stock chroma key doesn't even expose - or inspect the learned
+  screen grid.
 - **Realtime.** All pixel-shader work at full frame rate. ~0 added
   latency, tiny GPU cost.
 
@@ -49,28 +58,44 @@ Restart OBS. Add **Filters -> Better Key** to your source.
 | Screen color | The key color (green, blue, whatever your screen is) |
 | Screen similarity | How close to the key color counts as screen |
 | Screen smoothness | Edge transition softness |
-| **Auto-calibrate screen** | Samples the frame corners, sets color + similarity for you |
+| **Auto-calibrate screen** | Samples the frame on a 2058-point grid, finds the dominant screen cluster, sets color + similarity |
+| Live screen tracking | Keeps re-measuring the screen grid as your scene changes |
 | Luma assist | Off / Key dark background / Key bright background + threshold + softness |
-| Despill strength | Removes screen spill AND cuts the faint background residue |
-| Translucent color fix | Desaturates uncertain unmixed hues on partial-alpha pixels |
+| Despill + haze cut | Removes screen spill AND cuts the faint background residue |
+| Particle color: neutral <-> vivid | Prior for underdetermined translucent pixels: neutral is exact for white/grey/yellow, vivid for red/purple/blue |
+| Particle saturation | Boosts saturation on translucent keyed pixels only (1 = unchanged) |
+| Particle color repair | Borrows hue from more solid neighbors on low-coverage pixels |
+| Desaturate translucent pixels | Pulls uncertain unmixed hues toward neutral |
 | Gamma / Contrast / Brightness / Opacity | Output color grade |
-| Output | Composite (keyed) / Final alpha matte / Raw input |
+| Output | Composite (keyed) / Final alpha matte / Raw input / Screen grid |
 
 ## How it works
 
-For every pixel the shader computes:
+Every 15 frames the filter samples the source on a 49 x 42 lattice
+(2058 points), keeps the points in the dominant screen-colored cluster,
+and fits a smooth quadratic surface per channel weighted toward the
+purest samples - so particles drifting across the screen are ignored
+instead of learned. That surface is uploaded as a small texture.
 
-1. **Chroma distance** in Cb/Cr space (9-tap box filter, sRGB-aware;
+For every pixel the shader then computes:
+
+1. **Local screen color** from the grid (or the picked key color if the
+   grid hasn't converged yet).
+2. **Chroma distance** in Cb/Cr space (9-tap box filter, sRGB-aware;
    same math as OBS's chroma_key_filter_v2) - how "screen-like" the
    pixel is.
-2. **Spill estimate** - how much of the key's dominant channel the pixel
-   carries - screen coverage `alpha = 1 - spill`.
-3. **Unmix** - solve `c = fg*alpha + screen*(1-alpha)` for `fg` to get
-   the true foreground color back.
-4. **Luma assist** multiplies in a luminance key if enabled.
-5. Translucent desat -> despill -> color grade -> premultiplied RGBA out.
-
-That's the whole keyer. ~60 lines of math at display resolution.
+3. **Unmix** - solve `c = fg*alpha + screen*(1-alpha)` for `fg` and
+   `alpha`. The equation is one short, so a prior picks the coverage:
+   neutral (key channel matches the larger other channel) for content
+   near solid subject pixels, vivid (smallest in-gamut coverage) for
+   free-floating translucent pixels.
+4. **Particle repair** - low-coverage pixels borrow chroma from the 8
+   more-solid sampled neighbors, keeping their own brightness.
+5. **Residue cut** (despill) - trims faint background haze from the
+   coverage estimate, after the color solve so it cannot shift hue.
+6. **Luma assist** multiplies in a luminance key if enabled.
+7. Translucent desat -> edge despill -> particle saturation -> color
+   grade -> premultiplied RGBA out.
 
 ## Building from source
 
@@ -96,7 +121,5 @@ another product. Everyone else: noncommercial use only.
 
 ## Roadmap
 
-- Residue-floor control for imperfect screens
-- Multi-color screens / uneven lighting
 - FFmpeg/OFX ports so this works on recorded footage, not just live
 - Optional AI matte assist (once there's training data worth using)

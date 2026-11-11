@@ -1,6 +1,6 @@
 /*
-Infinity Key - realtime AI keyer for OBS Studio
-Copyright (C) 2026 Infinity Key contributors
+Better Key - realtime chroma/luma keyer for OBS Studio
+Copyright (C) 2026 Insanity Labs
 */
 
 #include <obs-module.h>

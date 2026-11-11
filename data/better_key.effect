@@ -1,5 +1,6 @@
 uniform float4x4 ViewProj;
 uniform texture2d image;
+uniform texture2d field;
 
 uniform float despill;
 uniform float output_mode;
@@ -16,12 +17,22 @@ uniform float gamma;
 uniform float contrast;
 uniform float brightness;
 uniform float opacity;
+uniform float particle_vivid;
+uniform float particle_sat;
+uniform float field_valid;
+uniform float particle_repair;
 
 // same constants/color-space handling as obs's chroma_key_filter_v2
 uniform float4 cb_v4 = { -0.100644, -0.338572,  0.439216, 0.501961 };
 uniform float4 cr_v4 = {  0.439216, -0.398942, -0.040274, 0.501961 };
 
 sampler_state imageSampler {
+	Filter    = Linear;
+	AddressU  = Clamp;
+	AddressV  = Clamp;
+};
+
+sampler_state fieldSampler {
 	Filter    = Linear;
 	AddressU  = Clamp;
 	AddressV  = Clamp;
@@ -50,73 +61,166 @@ float3 BKNonlinear3(float3 rgb)
 	return float3(BKNonlinear(rgb.r), BKNonlinear(rgb.g), BKNonlinear(rgb.b));
 }
 
-float BKChromaDist(float3 rgb)
+float2 BKCbCr(float3 rgb)
 {
-	float2 key = float2(
-		dot(BKNonlinear3(chroma_color.rgb), cb_v4.xyz) + cb_v4.w,
-		dot(BKNonlinear3(chroma_color.rgb), cr_v4.xyz) + cr_v4.w);
 	float3 nl = BKNonlinear3(rgb);
-	return distance(key, float2(dot(nl, cb_v4.xyz) + cb_v4.w,
-				    dot(nl, cr_v4.xyz) + cr_v4.w));
+	return float2(dot(nl, cb_v4.xyz) + cb_v4.w, dot(nl, cr_v4.xyz) + cr_v4.w);
 }
 
-float BKBoxChromaDist(float3 rgb, float2 uv)
+// local screen color: the 49x42 sampled screen grid (2058 points,
+// bilinearly interpolated) when available, the global key otherwise
+float3 BKScreenAt(float2 uv)
+{
+	float3 g = field.Sample(fieldSampler, uv).rgb;
+	return (field_valid > 0.5) ? g : chroma_color.rgb;
+}
+
+float BKChromaDist(float3 rgb, float2 key)
+{
+	return distance(key, BKCbCr(rgb));
+}
+
+float BKBoxChromaDist(float3 rgb, float2 uv, float2 key)
 {
 	float2 half_px = pixel_size / 2.0;
-	float d = BKChromaDist(image.Sample(imageSampler, uv - float2(pixel_size.x, half_px.y)).rgb);
-	d += BKChromaDist(image.Sample(imageSampler, uv + float2(pixel_size.x, half_px.y)).rgb);
-	d += BKChromaDist(image.Sample(imageSampler, uv - float2(half_px.x, -pixel_size.y)).rgb);
-	d += BKChromaDist(image.Sample(imageSampler, uv + float2(half_px.x, -pixel_size.y)).rgb);
+	float d = BKChromaDist(image.Sample(imageSampler, uv - float2(pixel_size.x, half_px.y)).rgb, key);
+	d += BKChromaDist(image.Sample(imageSampler, uv + float2(pixel_size.x, half_px.y)).rgb, key);
+	d += BKChromaDist(image.Sample(imageSampler, uv - float2(half_px.x, -pixel_size.y)).rgb, key);
+	d += BKChromaDist(image.Sample(imageSampler, uv + float2(half_px.x, -pixel_size.y)).rgb, key);
 	d *= 2.0;
-	d += BKChromaDist(rgb);
+	d += BKChromaDist(rgb, key);
 	return d / 9.0;
+}
+
+float BKScreenlike(float chroma_dist)
+{
+	float base_mask = chroma_dist - chroma_similarity;
+	return pow(saturate(1.0 - base_mask / (chroma_smoothness * 4.0)), 1.5);
+}
+
+// reorder channels so the key channel sits in .g (self-inverse)
+float3 BKSwz(float3 c, float3 B)
+{
+	if (B.g >= max(B.r, B.b))
+		return c;
+	if (B.b >= max(B.r, B.g))
+		return c.rbg;
+	return c.grb;
+}
+
+float BKLimit(float d, float b)
+{
+	return (d > 0.0) ? max(d - 0.02 * b, 0.0) / max(1.0 - b, 0.001)
+			 : max(-d - 0.02 * (1.0 - b), 0.0) / max(b, 0.02);
+}
+
+// Solve C = a*F + (1-a)*B for F and a. One equation short, so a prior
+// picks the coverage:
+//   neutral: F's key channel equals its larger other channel (exact
+//            for white / grey / yellow / cyan foregrounds)
+//   vivid:   the smallest coverage that still gives a valid color
+//            (exact for red / purple / blue / pink foregrounds)
+// vw blends between them. Coverage never drops below the vivid bound,
+// so the recovered color is always in gamut.
+float4 BKSolve(float3 c, float3 B, float vw)
+{
+	float3 ck = BKSwz(c, B);
+	float3 Bk = BKSwz(B, B);
+	float3 d = ck - Bk;
+	float range = max(Bk.g - max(Bk.r, Bk.b), 0.05);
+	float a_n = 1.0 - saturate((ck.g - max(ck.r, ck.b)) / range);
+	float a_min = saturate(max(BKLimit(d.r, Bk.r), max(BKLimit(d.g, Bk.g), BKLimit(d.b, Bk.b))));
+	float a = max(lerp(a_n, a_min, vw), a_min);
+	float3 F = (a > 0.02) ? saturate(Bk + d / a) : ck;
+	return float4(BKSwz(F, B), a);
+}
+
+// single-tap solve used for neighbour lookups
+float4 BKSolveAt(float2 uv)
+{
+	float4 s = image.Sample(imageSampler, uv);
+	s.rgb *= (s.a > 1e-6) ? (1.0 / s.a) : 0.0;
+	float3 Bn = BKScreenAt(uv);
+	float sl = BKScreenlike(BKChromaDist(s.rgb, BKCbCr(Bn)));
+	float an = BKSolve(s.rgb, Bn, 0.0).a;
+	float4 r = BKSolve(s.rgb, Bn, particle_vivid * (1.0 - smoothstep(0.3, 0.6, an)));
+	return (sl > 0.05) ? r : float4(s.rgb, 1.0);
 }
 
 float4 PSBetterKey(VertData v_in) : TARGET
 {
 	float4 c = image.Sample(imageSampler, v_in.uv);
-	if (output_mode > 2.5)
+	if (output_mode > 2.5 && output_mode < 3.5)
 		return float4(saturate(c.rgb), 1.0); // raw input view
 
 	c.rgb *= (c.a > 1e-6) ? (1.0 / c.a) : 0.0;
 
+	float3 B = BKScreenAt(v_in.uv);
+	if (output_mode > 3.5)
+		return float4(saturate(B), 1.0); // screen grid view
+
 	float a = 1.0;
 	float screenlike = 0.0;
 	float spill_amt = 0.0;
+	float translucency = 0.0;
 
 	if (chroma_enable > 0.5) {
-		float chroma_dist = BKBoxChromaDist(c.rgb, v_in.uv);
-		float base_mask = chroma_dist - chroma_similarity;
-		screenlike = pow(
-			saturate(1.0 - base_mask / (chroma_smoothness * 4.0)),
-			1.5);
+		float chroma_dist = BKBoxChromaDist(c.rgb, v_in.uv, BKCbCr(B));
+		screenlike = BKScreenlike(chroma_dist);
 
-		// how much of the key's dominant channel this pixel carries
-		// the true screen fraction (Vlahos-style coverage estimate)
-		float gkey = max(chroma_color.r,
-				 max(chroma_color.g, chroma_color.b));
-		if (chroma_color.g >= max(chroma_color.r, chroma_color.b))
-			spill_amt = saturate((c.g - max(c.r, c.b)) /
-					     max(gkey, 0.05));
-		else if (chroma_color.b >=
-			 max(chroma_color.r, chroma_color.g))
-			spill_amt = saturate((c.b - max(c.r, c.g)) /
-					     max(gkey, 0.05));
-		else
-			spill_amt = saturate((c.r - max(c.g, c.b)) /
-					     max(gkey, 0.05));
+		float2 r1 = pixel_size * 3.0;
+		float2 r2 = pixel_size * 2.0;
+		float4 n0 = BKSolveAt(v_in.uv + float2(r1.x, 0.0));
+		float4 n1 = BKSolveAt(v_in.uv - float2(r1.x, 0.0));
+		float4 n2 = BKSolveAt(v_in.uv + float2(0.0, r1.y));
+		float4 n3 = BKSolveAt(v_in.uv - float2(0.0, r1.y));
+		float4 n4 = BKSolveAt(v_in.uv + float2(r2.x, r2.y));
+		float4 n5 = BKSolveAt(v_in.uv - float2(r2.x, r2.y));
+		float4 n6 = BKSolveAt(v_in.uv + float2(r2.x, -r2.y));
+		float4 n7 = BKSolveAt(v_in.uv - float2(r2.x, -r2.y));
+		float nmax = max(max(max(n0.a, n1.a), max(n2.a, n3.a)), max(max(n4.a, n5.a), max(n6.a, n7.a)));
+
+		// the vivid prior is for free-floating translucent content;
+		// next to solid subject pixels (anti-aliased edges) stay
+		// neutral so grey fur and cloth edges do not fringe magenta
+		// and only on faint pixels: anything with substantial neutral
+		// coverage (fur, cloth, sheer fabric) keeps the neutral solve
+		float a_neutral = BKSolve(c.rgb, B, 0.0).a;
+		spill_amt = 1.0 - a_neutral;
+		float vw = particle_vivid * (1.0 - smoothstep(0.5, 0.9, nmax)) *
+			(1.0 - smoothstep(0.3, 0.6, a_neutral));
+
+		float4 sol = BKSolve(c.rgb, B, vw);
 
 		if (screenlike > 0.05) {
-			// despill also widens the spill estimate a second job:
-			// cutting the faint residue ghost on near-screen pixels
-			float s2 = saturate(spill_amt *
-					    (1.0 + despill * 0.6));
-			float au = min(a, 1.0 - s2);
-			if (au > 0.02)
-				c.rgb = saturate(
-					(c.rgb - chroma_color.rgb * (1.0 - au)) /
-					au);
-			a = au;
+			c.rgb = sol.rgb;
+			a = sol.a;
+			translucency = 1.0 - smoothstep(0.6, 0.95, a);
+
+			// particle color repair: the unmix divides by coverage,
+			// so low-coverage pixels have noisy hue. Borrow chroma
+			// from more solid neighbours, keep this pixel's luma.
+			float wsum = a * a + 1e-4;
+			float3 acc = c.rgb * wsum;
+			acc += n0.rgb * n0.a * n0.a; wsum += n0.a * n0.a;
+			acc += n1.rgb * n1.a * n1.a; wsum += n1.a * n1.a;
+			acc += n2.rgb * n2.a * n2.a; wsum += n2.a * n2.a;
+			acc += n3.rgb * n3.a * n3.a; wsum += n3.a * n3.a;
+			acc += n4.rgb * n4.a * n4.a; wsum += n4.a * n4.a;
+			acc += n5.rgb * n5.a * n5.a; wsum += n5.a * n5.a;
+			acc += n6.rgb * n6.a * n6.a; wsum += n6.a * n6.a;
+			acc += n7.rgb * n7.a * n7.a; wsum += n7.a * n7.a;
+			float3 avg = acc / wsum;
+			float3 lw = float3(0.299, 0.587, 0.114);
+			float3 fixed_rgb = saturate(avg * (dot(c.rgb, lw) / max(dot(avg, lw), 0.02)));
+			float k = saturate(particle_repair * (1.0 - a) * 1.5) * step(0.01, a);
+			c.rgb = lerp(c.rgb, fixed_rgb, k);
+
+			// residue cut: trims the faint background haze. Applied to
+			// coverage only, after the color solve, so it cannot
+			// shift hue.
+			float hz = despill * 0.08;
+			a = saturate((a - hz) / (1.0 - hz));
 		}
 	}
 
@@ -133,8 +237,7 @@ float4 PSBetterKey(VertData v_in) : TARGET
 	if (output_mode > 1.5)
 		return float4(saturate(a), saturate(a), saturate(a), 1.0);
 
-	// translucent color fix: unmixed hues are estimates pull
-	// uncertain colors toward neutral so particles read clean
+	// translucent color fix: pull uncertain colors toward neutral
 	if (trans_desat > 0.001) {
 		float lum2 = dot(c.rgb, float3(0.299, 0.587, 0.114));
 		c.rgb = lerp(c.rgb, float3(lum2, lum2, lum2),
@@ -160,6 +263,11 @@ float4 PSBetterKey(VertData v_in) : TARGET
 			r = lerp(r, max(g, b), k);
 		c.rgb = float3(r, g, b);
 	}
+
+	// particle saturation: only translucent keyed pixels, after despill
+	// so leftover screen tint is not amplified
+	float plum = dot(c.rgb, float3(0.299, 0.587, 0.114));
+	c.rgb = saturate(lerp(c.rgb, plum + (c.rgb - plum) * particle_sat, translucency));
 
 	// output color grade
 	c.rgb = pow(saturate(c.rgb), float3(gamma, gamma, gamma)) * contrast + brightness;
