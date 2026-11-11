@@ -468,8 +468,8 @@ static void bk_measure_grid(bk_filter *f, gs_texture_t *frame_tex, bool calibrat
 
 	if (!f->grid_logged || calibrate) {
 		f->grid_logged = true;
-		blog(LOG_INFO, "[better-key] screen grid: %zu of %d points on screen, key rgb=(%.0f,%.0f,%.0f)%s", inliers,
-		     GRID_N, (double)(kr * 255.f), (double)(kg * 255.f), (double)(kb * 255.f),
+		blog(LOG_INFO, "[better-key] screen grid: %zu of %d points on screen, key rgb=(%.0f,%.0f,%.0f)%s",
+		     inliers, GRID_N, (double)(kr * 255.f), (double)(kg * 255.f), (double)(kb * 255.f),
 		     calibrate ? " (calibrated)" : "");
 	}
 
@@ -545,8 +545,7 @@ static void bk_video_render(void *data, gs_effect_t *)
 	if (f->calibrate_pending) {
 		f->calibrate_pending = false;
 		bk_measure_grid(f, frame_tex, true);
-	} else if (f->chroma && f->track &&
-		   (!f->grid_valid || f->grid_reset || f->frame_idx % TRACK_INTERVAL == 0)) {
+	} else if (f->chroma && f->track && (!f->grid_valid || f->grid_reset || f->frame_idx % TRACK_INTERVAL == 0)) {
 		bk_measure_grid(f, frame_tex, false);
 	}
 
